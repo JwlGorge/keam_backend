@@ -6,7 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlmodel import Session, select, func, desc, and_
 from pydantic import BaseModel
 
-from database import engine, User, Exam, Result, create_db_and_tables
+from database import engine, Result, Top10, create_db_and_tables
 
 app = FastAPI(title="KEAM Prep Global Exam API")
 
@@ -36,49 +36,63 @@ class SubmissionResponse(BaseModel):
     percentile: float
     top_10: List[RankInfo]
 
+# Hardcoded Exam Schedule for Malayalam/Kerala Exams (UTC - Entire Day)
+# Format: { filename: (start_time, end_time) }
+EXAM_SCHEDULE = {
+    "random_qp1.json": (
+        datetime(2026, 4, 10, 0, 0, tzinfo=timezone.utc),
+        datetime(2026, 4, 10, 23, 59, 59, tzinfo=timezone.utc)
+    ),
+    "random_qp2.json": (
+        datetime(2026, 4, 12, 0, 0, tzinfo=timezone.utc),
+        datetime(2026, 4, 12, 23, 59, 59, tzinfo=timezone.utc)
+    ),
+    "random_qp3.json": (
+        datetime(2026, 4, 13, 0, 0, tzinfo=timezone.utc),
+        datetime(2026, 4, 13, 23, 59, 59, tzinfo=timezone.utc)
+    ),
+    "random_qp4.json": (
+        datetime(2026, 4, 14, 0, 0, tzinfo=timezone.utc),
+        datetime(2026, 4, 14, 23, 59, 59, tzinfo=timezone.utc)
+    ),
+}
+
 @app.on_event("startup")
 def on_startup():
     create_db_and_tables()
 
-
+@app.get("/")
+def read_root():
+    return {"message": "Global Exam API is online", "server_time": datetime.now(timezone.utc)}
 
 @app.post("/submit", response_model=SubmissionResponse)
 def submit_result(submission: SubmissionRequest):
     with Session(engine) as session:
         # 1. Server-side time validation
         now = datetime.now(timezone.utc)
-        exam = session.exec(select(Exam).where(Exam.paper_name == submission.paper_name)).first()
+        window = EXAM_SCHEDULE.get(submission.paper_name)
         
-        if exam and not (exam.start_time <= now <= exam.end_time):
-             # For production, uncomment this:
-             # raise HTTPException(status_code=403, detail="Submission closed or not yet open")
-             pass
+        if window:
+            start_time, end_time = window
+            if not (start_time <= now <= end_time):
+                 # REJECT if outside the hardcoded window
+                 raise HTTPException(status_code=403, detail="Submission closed or not yet open")
 
         # 2. Check for existing submission - BLOCK SECOND ATTEMPT
         existing = session.exec(
             select(Result).where(
-                and_(Result.user_id == submission.user_id, Result.paper_name == submission.paper_name)
+                and_(Result.user_name == submission.user_name, Result.paper_name == submission.paper_name)
             )
         ).first()
         
         if existing:
             raise HTTPException(status_code=403, detail="already submitted second attempt not allowed")
 
-        # Create user if doesn't exist
-        user = session.get(User, submission.user_id)
-        if not user:
-            user = User(id=submission.user_id, name=submission.user_name, email=f"user_{submission.user_id}@example.com")
-            session.add(user)
-            session.commit()
-            session.refresh(user)
-
         # Create new result
         result = Result(
-            user_id=submission.user_id,
+            user_name=submission.user_name,
             paper_name=submission.paper_name,
             score=submission.score,
-            correct_count=submission.correct_count,
-            wrong_count=submission.wrong_count,
             submitted_at=now
         )
         session.add(result)
@@ -93,13 +107,9 @@ def submit_result(submission: SubmissionRequest):
             .order_by(desc(Top10.score), Top10.submitted_at)
         ).all()
 
-        is_in_top_10 = False
         if len(top_10_entries) < 10 or submission.score > top_10_entries[-1].score:
             # User qualifies for Top 10
-            # Remove existing entry if they were already there (shouldn't happen with blocks, but safe)
-            # Add new entry
             new_top = Top10(
-                user_id=submission.user_id,
                 user_name=submission.user_name,
                 paper_name=submission.paper_name,
                 score=submission.score,
@@ -123,7 +133,6 @@ def submit_result(submission: SubmissionRequest):
                 updated_top = updated_top[:10]
             
             top_10_entries = updated_top
-            is_in_top_10 = True
 
         # 4. Calculate Rank and Percentile from the full Result table
         all_results = session.exec(
@@ -138,7 +147,7 @@ def submit_result(submission: SubmissionRequest):
         
         for i, res in enumerate(all_results):
             rank = i + 1
-            if res.user_id == submission.user_id:
+            if res.user_name == submission.user_name:
                 user_rank = rank
             if res.score < submission.score:
                 below_count += 1

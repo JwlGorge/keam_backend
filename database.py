@@ -12,32 +12,19 @@ engine = create_engine(DATABASE_URL, echo=True)
 
 class Result(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
-    user_name
-    paper_name: str
-    score: int
-    submitted_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-
-    __table_args__ = (
-        # Ensure one result per user per paper
-        {"sqlite_autoincrement": True},
-    )
-
-class Top10(SQLModel, table=True):
-    id: Optional[int] = Field(default=None, primary_key=True)
     user_name: str
     paper_name: str
     score: int
     submitted_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
     __table_args__ = (
-        # Ensure one result per user per paper
+        # SQLite autoincrement for compatibility
         {"sqlite_autoincrement": True},
     )
 
 class Top10(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     user_name: str
-    user_id: int
     paper_name: str
     score: int
     submitted_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
