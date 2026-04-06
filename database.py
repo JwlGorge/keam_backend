@@ -18,8 +18,8 @@ engine = create_engine(
 class Result(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     user_name: str
-    paper_name: str
-    score: int
+    paper_name: str = Field(index=True)
+    score: int = Field(index=True)
     submitted_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
     __table_args__ = (
@@ -30,8 +30,8 @@ class Result(SQLModel, table=True):
 class Top10(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     user_name: str
-    paper_name: str
-    score: int
+    paper_name: str = Field(index=True)
+    score: int = Field(index=True)
     submitted_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
     __table_args__ = (
