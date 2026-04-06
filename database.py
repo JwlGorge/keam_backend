@@ -20,6 +20,7 @@ class Result(SQLModel, table=True):
     user_name: str
     paper_name: str = Field(index=True)
     score: int = Field(index=True)
+    device_id: str = Field(index=True)
     submitted_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
     __table_args__ = (
@@ -32,6 +33,7 @@ class Top10(SQLModel, table=True):
     user_name: str
     paper_name: str = Field(index=True)
     score: int = Field(index=True)
+    device_id: str = Field(index=True)
     submitted_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
     __table_args__ = (
