@@ -8,7 +8,12 @@ load_dotenv()
 
 DATABASE_URL = os.getenv("DATABASE_URL")
 
-engine = create_engine(DATABASE_URL, echo=True)
+engine = create_engine(
+    DATABASE_URL, 
+    echo=False, 
+    pool_pre_ping=True, 
+    connect_args={"sslmode": "require"} # Required for Neon/Serverless DB
+)
 
 class Result(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)

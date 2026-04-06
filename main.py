@@ -40,8 +40,8 @@ class SubmissionResponse(BaseModel):
 # Format: { filename: (start_time, end_time) }
 EXAM_SCHEDULE = {
     "random_qp1.json": (
-        datetime(2026, 4, 10, 0, 0, tzinfo=timezone.utc),
-        datetime(2026, 4, 10, 23, 59, 59, tzinfo=timezone.utc)
+        datetime(2026, 4, 6, 0, 0, tzinfo=timezone.utc),
+        datetime(2026, 4, 6, 23, 59, 59, tzinfo=timezone.utc)
     ),
     "random_qp2.json": (
         datetime(2026, 4, 12, 0, 0, tzinfo=timezone.utc),
@@ -57,9 +57,12 @@ EXAM_SCHEDULE = {
     ),
 }
 
-@app.on_event("startup")
-def on_startup():
+# VERCEL SERVERLESS OPTIMIZATION: 
+# Move database initialization to top-level so it runs during "cold starts"
+try:
     create_db_and_tables()
+except Exception as e:
+    print(f"DB initialization already handled or failed: {e}")
 
 @app.get("/")
 def read_root():
