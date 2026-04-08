@@ -41,8 +41,8 @@ class SubmissionResponse(BaseModel):
 # Format: { filename: (start_time, end_time) }
 EXAM_SCHEDULE = {
     "random_qp1.json": (
-        datetime(2026, 4, 10, 0, 0, tzinfo=timezone.utc),
-        datetime(2026, 4, 10, 23, 59, 59, tzinfo=timezone.utc)
+        datetime(2026, 4, 8, 0, 0, tzinfo=timezone.utc),
+        datetime(2026, 4, 8, 23, 59, 59, tzinfo=timezone.utc)
     ),
     "random_qp2.json": (
         datetime(2026, 4, 12, 0, 0, tzinfo=timezone.utc),
@@ -106,7 +106,7 @@ def get_rankings_logic(session: Session, user_name: str, paper_name: str, curren
     
     below_count = session.exec(
         select(func.count(Result.id))
-        .where(and_(Result.paper_name == paper_name, Result.score <= current_score))
+        .where(and_(Result.paper_name == paper_name, Result.score < current_score))
     ).one()
 
     percentile = (below_count / total_participants * 100) if total_participants > 0 else 100.0
@@ -141,7 +141,7 @@ def get_rankings(user_name: str, paper_name: str, device_id: str):
         if not result:
             raise HTTPException(status_code=404, detail="No result found. Take the exam first!")
 
-        return get_rankings_logic(session, user_name, paper_name, result.score)
+        return get_rankings_logic(session, user_name, paper_name, result.score, result.device_id)
 
 @app.post("/submit", response_model=SubmissionResponse)
 def submit_result(submission: SubmissionRequest):
