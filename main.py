@@ -41,8 +41,8 @@ class SubmissionResponse(BaseModel):
 # Format: { filename: (start_time, end_time) }
 EXAM_SCHEDULE = {
     "random_qp1.json": (
-        datetime(2026, 4, 8, 0, 0, tzinfo=timezone.utc),
-        datetime(2026, 4, 8, 23, 59, 59, tzinfo=timezone.utc)
+        datetime(2026, 4, 9, 0, 0, tzinfo=timezone.utc),
+        datetime(2026, 4, 9, 23, 59, 59, tzinfo=timezone.utc)
     ),
     "random_qp2.json": (
         datetime(2026, 4, 12, 0, 0, tzinfo=timezone.utc),
