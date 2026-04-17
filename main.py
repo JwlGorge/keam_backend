@@ -37,26 +37,14 @@ class SubmissionResponse(BaseModel):
     percentile: float
     top_10: List[RankInfo]
 
-# Hardcoded Exam Schedule for Malayalam/Kerala Exams (UTC - Entire Day)
-# Format: { filename: (start_time, end_time) }
-EXAM_SCHEDULE = {
-    "random_qp1.json": (
-        datetime(2026, 4, 9, 0, 0, tzinfo=timezone.utc),
-        datetime(2026, 4, 9, 23, 59, 59, tzinfo=timezone.utc)
-    ),
-    "random_qp2.json": (
-        datetime(2026, 4, 12, 0, 0, tzinfo=timezone.utc),
-        datetime(2026, 4, 12, 23, 59, 59, tzinfo=timezone.utc)
-    ),
-    "random_qp3.json": (
-        datetime(2026, 4, 13, 0, 0, tzinfo=timezone.utc),
-        datetime(2026, 4, 13, 23, 59, 59, tzinfo=timezone.utc)
-    ),
-    "random_qp4.json": (
-        datetime(2026, 4, 14, 0, 0, tzinfo=timezone.utc),
-        datetime(2026, 4, 14, 23, 59, 59, tzinfo=timezone.utc)
-    ),
-}
+class GlobalRankResponse(BaseModel):
+    average_score: float
+    rank: int
+    total_users: int
+    top_10: List[RankInfo]
+
+# Scheduled Paper Names (Informational)
+AVAILABLE_PAPERS = ["random_qp1.json", "random_qp2.json", "random_qp3.json", "random_qp4.json"]
 
 # VERCEL SERVERLESS OPTIMIZATION: 
 # Move database initialization to top-level so it runs during "cold starts"
@@ -86,10 +74,11 @@ def get_rankings_logic(session: Session, user_name: str, paper_name: str, curren
     # 2. Determine User Rank
     user_rank = 0
     # Check Top 10 first - match by device_id to be precise
-    for idx, entry in enumerate(top_10_entries):
-        if entry.device_id == device_id:
-            user_rank = idx + 1
-            break
+    if device_id:
+        for idx, entry in enumerate(top_10_entries):
+            if entry.device_id == device_id:
+                user_rank = idx + 1
+                break
     
     # If not in Top 10, use indexed COUNT
     if user_rank == 0:
@@ -99,62 +88,114 @@ def get_rankings_logic(session: Session, user_name: str, paper_name: str, curren
         ).one()
         user_rank = higher_scores_count + 1
 
+    # Ensure competition ranking for Top 10 as well
+    # (If multiple people have same score, they should have same rank)
+    sorted_top_10 = []
+    if top_10_entries:
+        for idx, t in enumerate(top_10_entries):
+            # Calculate rank for each top 10 entry correctly
+            rank_count = session.exec(
+                select(func.count(Result.id))
+                .where(and_(Result.paper_name == paper_name, Result.score > t.score))
+            ).one()
+            sorted_top_10.append(RankInfo(name=t.user_name, score=t.score, rank=rank_count + 1))
+    
     # 3. Calculate Percentile
     total_participants = session.exec(
         select(func.count(Result.id)).where(Result.paper_name == paper_name)
     ).one()
     
-    below_count = session.exec(
-        select(func.count(Result.id))
-        .where(and_(Result.paper_name == paper_name, Result.score < current_score))
-    ).one()
-
-    percentile = (below_count / total_participants * 100) if total_participants > 0 else 100.0
-
-    # 4. Prepare Top 10 response
-    response_top_10 = [
-        RankInfo(name=t.user_name, score=t.score, rank=idx + 1)
-        for idx, t in enumerate(top_10_entries)
-    ]
+    percentile = 0.0
+    if total_participants > 0:
+        below_count = session.exec(
+            select(func.count(Result.id))
+            .where(and_(Result.paper_name == paper_name, Result.score < current_score))
+        ).one()
+        percentile = (below_count / total_participants * 100)
 
     return SubmissionResponse(
         score=current_score,
-        rank=user_rank,
+        rank=user_rank if current_score > 0 or total_participants > 0 else 0,
         percentile=round(percentile, 2),
-        top_10=response_top_10
+        top_10=sorted_top_10
     )
 
 @app.get("/rankings", response_model=SubmissionResponse)
-def get_rankings(user_name: str, paper_name: str, device_id: str):
+def get_rankings(paper_name: str, user_name: Optional[str] = None, device_id: Optional[str] = None):
     with Session(engine) as session:
-        # Fetch the user's latest score - identity is (user_name, device_id)
-        result = session.exec(
-            select(Result).where(
-                and_(
-                    Result.user_name == user_name, 
-                    Result.device_id == device_id, 
-                    Result.paper_name == paper_name
+        # If user info is provided, try to find their specific result
+        if user_name and device_id:
+            result = session.exec(
+                select(Result).where(
+                    and_(
+                        Result.user_name == user_name, 
+                        Result.device_id == device_id, 
+                        Result.paper_name == paper_name
+                    )
                 )
-            )
-        ).first()
+            ).first()
+            
+            if result:
+                return get_rankings_logic(session, user_name, paper_name, result.score, result.device_id)
         
-        if not result:
-            raise HTTPException(status_code=404, detail="No result found. Take the exam first!")
+        # Fallback: Just return the global leaderboard with 0 as user score
+        return get_rankings_logic(session, "Anonymous", paper_name, 0, device_id or "")
 
-        return get_rankings_logic(session, user_name, paper_name, result.score, result.device_id)
+@app.get("/global-rankings", response_model=GlobalRankResponse)
+def get_global_rankings(device_id: Optional[str] = Query(None)):
+    """
+    Calculates rankings based on the AVERAGE score across ALL papers attempted by each user.
+    """
+    with Session(engine) as session:
+        # 1. Get all results grouped by device_id to calculate averages
+        # Note: We use the latest user_name associated with a device_id
+        raw_stats = session.exec(
+            select(
+                Result.device_id, 
+                func.avg(Result.score).label("avg_score"), 
+                func.max(Result.user_name).label("user_name")
+            ).group_by(Result.device_id)
+        ).all()
+        
+        if not raw_stats:
+            return GlobalRankResponse(average_score=0.0, rank=0, total_users=0, top_10=[])
+
+        # 2. Sort users by average score descending
+        sorted_stats = sorted(raw_stats, key=lambda x: x[1], reverse=True)
+        total_users = len(sorted_stats)
+        
+        # 3. Find target user rank and stats
+        user_avg = 0.0
+        user_rank = 0
+        if device_id:
+            for idx, stat in enumerate(sorted_stats):
+                if stat[0] == device_id:
+                    user_avg = float(stat[1])
+                    user_rank = idx + 1
+                    break
+        
+        # 4. Prepare Top 10
+        top_10 = []
+        for idx, stat in enumerate(sorted_stats[:10]):
+            top_10.append(RankInfo(
+                name=stat[2], 
+                score=int(round(float(stat[1]))), 
+                rank=idx + 1
+            ))
+            
+        return GlobalRankResponse(
+            average_score=user_avg,
+            rank=user_rank,
+            total_users=total_users,
+            top_10=top_10
+        )
 
 @app.post("/submit", response_model=SubmissionResponse)
 def submit_result(submission: SubmissionRequest):
     with Session(engine) as session:
         # 1. Server-side time validation
         now = datetime.now(timezone.utc)
-        window = EXAM_SCHEDULE.get(submission.paper_name)
-        
-        if window:
-            start_time, end_time = window
-            if not (start_time <= now <= end_time):
-                 # REJECT if outside the hardcoded window
-                 raise HTTPException(status_code=403, detail="Submission closed or not yet open")
+        # Date validation removed to allow attempts at any time
 
         # 2. Check for existing submission - BLOCK SECOND ATTEMPT BY DEVICE
         existing = session.exec(
